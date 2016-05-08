@@ -1,0 +1,15 @@
+build
+build-eclipse
+.classpath*
+.externalToolBuilders
+.project
+.settings
+*.launch
+*~
+.idea
+*.iml
+*.ipr
+*.iws
+*.swp
+.arc
+target/
