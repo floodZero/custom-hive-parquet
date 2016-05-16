@@ -37,6 +37,9 @@
                 <relocation>
                   <pattern>parquet</pattern>
                   <shadedPattern>custom.parquet</shadedPattern>
+                  <excludes>
+                    <exclude>parquet.hadoop.example.ExampleOutputFormat</exclude>
+                  </excludes>
                 </relocation>
               </relocations>
             </configuration>

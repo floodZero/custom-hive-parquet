@@ -59,6 +59,9 @@
 								<relocation>
 									<pattern>parquet</pattern>
 									<shadedPattern>custom.parquet</shadedPattern>
+                                    <excludes>
+                                        <exclude>parquet.hadoop.example.ExampleOutputFormat</exclude>
+                                    </excludes>
 								</relocation>
 							</relocations>
 						</configuration>
@@ -73,7 +76,7 @@
 			<groupId>com.twitter</groupId>
 			<artifactId>parquet-hadoop</artifactId>
 			<version>1.5.0-cdh5.5.1</version>
-			<!-- scope>provided</scope -->
+			<!--<scope>provided</scope>-->
 		</dependency>
 		<dependency>
 			<groupId>org.apache.hadoop</groupId>

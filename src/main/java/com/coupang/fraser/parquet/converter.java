@@ -1,148 +1,97 @@
 package com.coupang.fraser.parquet;
 
-import static java.lang.Thread.sleep;
-
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.NullWritable;
-import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
 import parquet.Log;
 import parquet.example.data.Group;
-import parquet.hadoop.ParquetInputSplit;
+import parquet.hadoop.example.GroupWriteSupport;
 import parquet.hadoop.example.ExampleInputFormat;
-import parquet.schema.MessageTypeParser;
-import parquet.schema.Type;
-import parquet.schema.GroupType;
+import parquet.hadoop.example.ExampleOutputFormat;
+import parquet.hadoop.metadata.CompressionCodecName;
+import parquet.hadoop.ParquetFileReader;
+import parquet.hadoop.metadata.ParquetMetadata;
+import parquet.schema.MessageType;
 
-public class converter extends Configured implements Tool {
-	private static class FieldDescription {
-		public String constraint;
-		public String type;
-		public String name;
-	}
-
-	private static class RecordSchema {
-		public RecordSchema(String message) {
-			fields = new ArrayList<FieldDescription>();
-			List<String> elements = Arrays.asList(message.split("\n"));
-			Iterator<String> it = elements.iterator();
-			while (it.hasNext()) {
-				String line = it.next().trim().replace(";", "");
-				;
-				System.err.println("RecordSchema read line: " + line);
-				if (line.startsWith("optional") || line.startsWith("required")) {
-					String[] parts = line.split(" ");
-					FieldDescription field = new FieldDescription();
-					field.constraint = parts[0];
-					field.type = parts[1];
-					field.name = parts[2];
-					fields.add(field);
-				}
-			}
-		}
-
-		private List<FieldDescription> fields;
-
-		public List<FieldDescription> getFields() {
-			return fields;
-		}
-	}
-
+public class converter  extends Configured implements Tool {
+	private static final Log LOG = Log.getLog(converter.class);
 	/*
-	 * Read a Parquet record, write a CSV record
-	 */
-	public static class ReadRequestMap extends Mapper<LongWritable, Group, NullWritable, Text> {
-		private static List<FieldDescription> expectedFields = null;
-
+     * Read a Parquet record, write a Parquet record
+     */
+	public static class ReadRequestMap extends Mapper<LongWritable, Group, Void, Group> {
 		@Override
 		public void map(LongWritable key, Group value, Context context) throws IOException, InterruptedException {
-			NullWritable outKey = NullWritable.get();
-			if (expectedFields == null) {
-				// Get the file schema which may be different from the fields in
-				// a particular record) from the input split
-				String fileSchema = ((ParquetInputSplit) context.getInputSplit()).getFileSchema();
-				// System.err.println("file schema from context: " +
-				// fileSchema);
-				RecordSchema schema = new RecordSchema(fileSchema);
-				expectedFields = schema.getFields();
-				// System.err.println("inferred schema: " +
-				// expectedFields.toString());
-			}
-
-			// No public accessor to the column values in a Group, so extract
-			// them from the string representation
-			String line = value.toString();
-			String[] fields = line.split("\n");
-
-			StringBuilder csv = new StringBuilder();
-			boolean hasContent = false;
-			int i = 0;
-			// Look for each expected column
-			Iterator<FieldDescription> it = expectedFields.iterator();
-			while (it.hasNext()) {
-				if (hasContent) {
-					csv.append(',');
-				}
-				String name = it.next().name;
-				if (fields.length > i) {
-					String[] parts = fields[i].split(": ");
-					// We assume proper order, but there may be fields missing
-					if (parts[0].equals(name)) {
-						boolean mustQuote = (parts[1].contains(",") || parts[1].contains("'"));
-						if (mustQuote) {
-							csv.append('"');
-						}
-						csv.append(parts[1]);
-						if (mustQuote) {
-							csv.append('"');
-						}
-						hasContent = true;
-						i++;
-					}
-				}
-			}
-			context.write(outKey, new Text(csv.toString()));
+			context.write(null, value);
 		}
 	}
 
 	public int run(String[] args) throws Exception {
-		getConf().set("mapred.textoutputformat.separator", ",");
+		if(args.length < 2) {
+			LOG.error("Usage: " + getClass().getName() + " INPUTFILE OUTPUTFILE [compression]");
+			return 1;
+		}
+		String inputFile = args[0];
+		String outputFile = args[1];
+		String compression = (args.length > 2) ? args[2] : "none";
+
+        Path outputPath = new Path(outputFile);
+        if(FileSystem.get(getConf()).exists(outputPath)) {
+            FileSystem.get(getConf()).delete(outputPath, true);
+        }
+
+		Path parquetFilePath = null;
+		// Find a file in case a directory was passed
+		RemoteIterator<LocatedFileStatus> it = FileSystem.get(getConf()).listFiles(new Path(inputFile), true);
+		while(it.hasNext()) {
+			FileStatus fs = it.next();
+			if(fs.isFile()) {
+				parquetFilePath = fs.getPath();
+				break;
+			}
+		}
+		if(parquetFilePath == null) {
+			LOG.error("No file found for " + inputFile);
+			return 1;
+		}
+		LOG.info("Getting schema from " + parquetFilePath);
+		ParquetMetadata readFooter = ParquetFileReader.readFooter(getConf(), parquetFilePath);
+		MessageType schema = readFooter.getFileMetaData().getSchema();
+		LOG.info(schema);
+		GroupWriteSupport.setSchema(schema, getConf());
 
 		Job job = new Job(getConf());
 		job.setJarByClass(getClass());
 		job.setJobName(getClass().getName());
-
-		job.setMapOutputKeyClass(LongWritable.class);
-		job.setMapOutputValueClass(Text.class);
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(Text.class);
-
 		job.setMapperClass(ReadRequestMap.class);
 		job.setNumReduceTasks(0);
-
 		job.setInputFormatClass(ExampleInputFormat.class);
-		job.setOutputFormatClass(TextOutputFormat.class);
+		job.setOutputFormatClass(ExampleOutputFormat.class);
 
-		FileInputFormat.setInputPaths(job, new Path(args[0]));
-		FileOutputFormat.setOutputPath(job, new Path(args[1]));
+		CompressionCodecName codec = CompressionCodecName.UNCOMPRESSED;
+		if(compression.equalsIgnoreCase("snappy")) {
+			codec = CompressionCodecName.SNAPPY;
+		} else if(compression.equalsIgnoreCase("gzip")) {
+			codec = CompressionCodecName.GZIP;
+		}
+		LOG.info("Output compression: " + codec);
+		ExampleOutputFormat.setCompression(job, codec);
+
+		FileInputFormat.setInputPaths(job, new Path(inputFile));
+		FileOutputFormat.setOutputPath(job, new Path(outputFile));
 
 		job.waitForCompletion(true);
 

@@ -13,3 +13,6 @@ build-eclipse
 *.swp
 .arc
 target/
+.DS_Store
+dependency-reduced-pom.xml
+sample*
